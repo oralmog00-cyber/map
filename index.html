@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>מירוץ מבוך אוטומטי - בית מרס</title>
+    <title>מירוץ מבוך רשת - בית מרס</title>
     <style>
         body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; }
         #canvas { display: block; margin: 0 auto; background: #000; }
@@ -17,14 +17,14 @@
 </head>
 <body>
 
-    <div id="status">יוצר מפה חבויה ומנתח מסלולים...</div>
+    <div id="status">טוען מפות ומודלים...</div>
     <canvas id="canvas"></canvas>
     <video id="video" autoplay muted playsinline></video>
 
     <div id="winner-screen">
         <h1 style="font-size: 48px; color: #ffd700; margin-bottom: 10px;">🏆 יש לנו מנצח! 🏆</h1>
         <canvas id="winner-canvas" width="150" height="150"></canvas>
-        <h2 id="winner-text" style="font-size: 28px;">השחקן צלח את המבוך והגיע לבית מרס!</h2>
+        <h2 id="winner-text" style="font-size: 28px;">השחקן הגיע לבית מרס וניצח!</h2>
         <button id="restart-btn" onclick="resetGame()">סיבוב חדש 🔄</button>
     </div>
 
@@ -40,12 +40,6 @@ const winnerText = document.getElementById('winner-text');
 canvas.width = 980;
 canvas.height = 735;
 
-// יצירת קנבס חבוי לטובת מפת המסלולים המבודדת
-const hiddenCanvas = document.createElement('canvas');
-hiddenCanvas.width = canvas.width;
-hiddenCanvas.height = canvas.height;
-const hCtx = hiddenCanvas.getContext('2d');
-
 function resizeCanvas() {
     const scale = Math.min(window.innerWidth / canvas.width, window.innerHeight / canvas.height);
     canvas.style.width = (canvas.width * scale) + 'px';
@@ -60,40 +54,66 @@ let people = [];
 let isCooldown = false;
 let gameOver = false;
 let playerCount = 0;
-let mapData = null; // ישמור את המידע על הפיקסלים של המסלול
 
 const playerColors = ['#3498db', '#2ecc71', '#f1c40f', '#e74c3c', '#9b59b6', '#e67e22'];
 
-// נקודת יעד סופית קבועה (בית מרס)
-const targetDestination = { x: 135, y: 85 };
-
-// נקודות התחלה בטוחות על הפס בתחתית
-const startPoints = [
-    { x: 620, y: 720 },
-    { x: 720, y: 690 },
-    { x: 470, y: 610 }
-];
-
-// פונקציה שבודקת האם פיקסל מסוים במפה הוא בצבע היעד #5ec7f2
-function isColorMatch(x, y) {
-    if (!mapData || x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return false;
-    const index = (Math.floor(y) * canvas.width + Math.floor(x)) * 4;
-    const r = mapData[index];
-    const g = mapData[index + 1];
-    const b = mapData[index + 2];
+// 📍 רשת נקודות צפופה במיוחד (High-Density Grid) העוקבת בדיוק פנימי אחרי נתיב התכלת
+const nodes = {
+    // שדרות ישראל גורי - קו ישר ועקומות עדינות
+    'guri_start': { x: 620, y: 720, neighbors: ['guri_1'] },
+    'guri_1': { x: 622, y: 690, neighbors: ['guri_start', 'guri_2'] },
+    'guri_2': { x: 625, y: 655, neighbors: ['guri_1', 'guri_3', 'guld_1'] },
+    'guri_3': { x: 623, y: 620, neighbors: ['guri_2', 'guri_4'] },
+    'guri_4': { x: 610, y: 585, neighbors: ['guri_3', 'haj_ini_square'] },
     
-    // בדיקת טווח צבע (Tolerance) כדי להתמודד עם שינויי גוון קלים של התכלת במפה
-    return (r >= 80 && r <= 110 && g >= 185 && g <= 215 && b >= 230 && b <= 255);
-}
+    // רחוב גולדפאדן (הסתעפות ימנית קטנה)
+    'guld_1': { x: 660, y: 670, neighbors: ['guri_2', 'guld_2'] },
+    'guld_2': { x: 700, y: 685, neighbors: ['guld_1', 'guld_end'] },
+    'guld_end': { x: 725, y: 692, neighbors: ['guld_2'] },
+
+    // כיכר חאג' עיני (צומת מרכזי)
+    'haj_ini_square': { x: 590, y: 550, neighbors: ['guri_4', 'hakran_1', 'keshet_r1'] },
+
+    // רחוב הקרן המוליך אל בי"ס נופים
+    'hakran_1': { x: 585, y: 515, neighbors: ['haj_ini_square', 'hakran_2'] },
+    'hakran_2': { x: 580, y: 475, neighbors: ['hakran_1', 'nofim_1'] },
+    'nofim_1': { x: 595, y: 445, neighbors: ['hakran_2', 'nofim_2'] },
+    'nofim_2': { x: 610, y: 415, neighbors: ['nofim_1', 'highway_junction'] },
+
+    // מבוך רחוב הקשת - סיבוב מעגלי מלא ומדויק על רצועת התכלת
+    'keshet_r1': { x: 550, y: 542, neighbors: ['haj_ini_square', 'keshet_r2'] },
+    'keshet_r2': { x: 515, y: 532, neighbors: ['keshet_r1', 'keshet_b1'] },
+    'keshet_b1': { x: 495, y: 560, neighbors: ['keshet_r2', 'keshet_b2'] },
+    'keshet_b2': { x: 480, y: 590, neighbors: ['keshet_b1', 'keshet_b3'] },
+    'keshet_b3': { x: 465, y: 612, neighbors: ['keshet_b2', 'keshet_l1'] },
+    'keshet_l1': { x: 440, y: 600, neighbors: ['keshet_b3', 'keshet_l2'] },
+    'keshet_l2': { x: 423, y: 570, neighbors: ['keshet_l1', 'keshet_l3'] },
+    'keshet_l3': { x: 418, y: 540, neighbors: ['keshet_l2', 'keshet_t1'] },
+    'keshet_t1': { x: 428, y: 505, neighbors: ['keshet_l3', 'keshet_t2'] },
+    'keshet_t2': { x: 448, y: 475, neighbors: ['keshet_t1', 'keshet_t3'] },
+    'keshet_t3': { x: 472, y: 452, neighbors: ['keshet_t2', 'highway_junction'] },
+
+    // רחוב לבון הראשי - עליה מדורגת צפונה במרכז המפה
+    'highway_junction': { x: 495, y: 380, neighbors: ['nofim_2', 'keshet_t3', 'highway_1'] },
+    'highway_1': { x: 490, y: 350, neighbors: ['highway_junction', 'highway_2'] },
+    'highway_2': { x: 475, y: 310, neighbors: ['highway_1', 'highway_3'] },
+    'highway_3': { x: 460, y: 270, neighbors: ['highway_2', 'highway_4'] },
+    'highway_4': { x: 445, y: 225, neighbors: ['highway_3', 'highway_5'] },
+    'highway_5': { x: 428, y: 180, neighbors: ['highway_4', 'highway_turn'] },
+    
+    // פנייה שמאלה וניווט רחוב בית מרס
+    'highway_turn': { x: 380, y: 130, neighbors: ['highway_5', 'mars_str_1'] },
+    'mars_str_1': { x: 335, y: 124, neighbors: ['highway_turn', 'mars_str_2'] },
+    'mars_str_2': { x: 285, y: 118, neighbors: ['mars_str_1', 'mars_str_3'] },
+    'mars_str_3': { x: 230, y: 112, neighbors: ['mars_str_2', 'mars_str_4'] },
+    'mars_str_4': { x: 185, y: 106, neighbors: ['mars_str_3', 'mars_target'] },
+    
+    // 🏁 נקודת היעד הסופית: בית מרס (הסיכה האדומה)
+    'mars_target': { x: 135, y: 85, neighbors: ['mars_str_4'] } 
+};
 
 async function init() {
     resizeCanvas();
-    
-    // ציור המפה על הקנבס החבוי ושליפת ערכי הצבעים שלו
-    hCtx.drawImage(mapBackground, 0, 0, canvas.width, canvas.height);
-    const imgData = hCtx.getImageData(0, 0, canvas.width, canvas.height);
-    mapData = imgData.data;
-
     statusDiv.innerText = "טוען מודלים של AI...";
     const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
     await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
@@ -106,7 +126,7 @@ function startVideo() {
         .then(stream => {
             video.srcObject = stream;
             video.addEventListener('play', () => {
-                statusDiv.innerText = "🎮 המבוך מוכן! עמוד מול המצלמה כדי להתחיל לצעוד על הפס התכלת.";
+                statusDiv.innerText = "🎮 מוכן! עמדו מול המצלמה והעיגולים ירוצו לאורך נתיב התכלת.";
                 animate();
                 detectFaceLoop();
             });
@@ -129,7 +149,7 @@ async function detectFaceLoop() {
 
 function triggerCapture(faceBox) {
     isCooldown = true;
-    statusDiv.innerText = "📸 נועל פנים למבוך... נא להישאר יציב.";
+    statusDiv.innerText = "📸 נועל פנים... הישאר יציב.";
     statusDiv.style.background = "#e67e22"; 
 
     setTimeout(() => {
@@ -161,20 +181,22 @@ async function captureAndAddNewPlayer() {
     const faceImage = new Image();
     faceImage.src = faceCanvas.toDataURL('image/png');
 
-    const startPos = startPoints[Math.floor(Math.random() * startPoints.length)];
+    const startNodes = ['guri_start', 'guld_end', 'keshet_b3'];
+    const randomStart = startNodes[Math.floor(Math.random() * startNodes.length)];
 
     people.push({
         id: playerCount,
         face: faceImage,
         color: playerColor,
-        x: startPos.x,
-        y: startPos.y,
-        angle: -Math.PI / 2, // כיוון התחלתי קדימה/למעלה
-        speed: 1.2,
-        history: [] // מונע תקיעה בלולאות מבוך
+        currentNode: randomStart,
+        targetNode: nodes[randomStart].neighbors[Math.floor(Math.random() * nodes[randomStart].neighbors.length)],
+        x: nodes[randomStart].x,
+        y: nodes[randomStart].y,
+        speed: 1.3 + Math.random() * 0.5, 
+        visited: [randomStart]
     });
 
-    statusDiv.innerText = "🏃‍♂️ שחקן " + playerCount + " נכנס ישירות לתוך הפס התכלת!";
+    statusDiv.innerText = "🏃‍♂️ שחקן " + playerCount + " זינק למסלול!";
     statusDiv.style.background = playerColor;
 
     setTimeout(() => {
@@ -188,7 +210,7 @@ async function captureAndAddNewPlayer() {
 
 function declareWinner(player) {
     gameOver = true;
-    winnerText.innerText = "שחקן " + player.id + " פיצח את מבוך התכלת והגיע לבית מרס!";
+    winnerText.innerText = "שחקן " + player.id + " הגיע ראשון לבית מרס וניצח!";
     winnerText.style.color = player.color;
     const wCtx = winnerCanvas.getContext('2d');
     wCtx.clearRect(0, 0, 150, 150);
@@ -201,7 +223,7 @@ function resetGame() {
     playerCount = 0;
     gameOver = false;
     winnerScreen.style.display = 'none';
-    statusDiv.innerText = "🎮 מי ינווט בתוך הפס ויגיע ראשון לבית מרס?";
+    statusDiv.innerText = "🎮 משחק חדש החל! מי יקלוט את בית מרס ראשון?";
     statusDiv.style.background = "rgba(0,0,0,0.8)";
     detectFaceLoop();
 }
@@ -214,53 +236,46 @@ function animate() {
         ctx.drawImage(mapBackground, 0, 0, canvas.width, canvas.height);
     }
 
-    // סימון יעד בית מרס
+    const goalNode = nodes['mars_target'];
     ctx.beginPath();
-    ctx.arc(targetDestination.x, targetDestination.y, 22, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(231, 76, 60, 0.3)';
+    ctx.arc(goalNode.x, goalNode.y, 22, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(231, 76, 60, 0.25)';
     ctx.fill();
     ctx.strokeStyle = '#e74c3c';
     ctx.lineWidth = 3;
     ctx.stroke();
 
     people.forEach((person) => {
-        // בדיקת מרחק לניצחון
-        const distToTarget = Math.hypot(targetDestination.x - person.x, targetDestination.y - person.y);
-        if (distToTarget < 25) {
-            declareWinner(person);
-            return;
-        }
-
-        let moved = false;
-        // בינה מלאכותית למציאת נתיב במבוך: סריקת 8 זוויות אפשריות סביב כיוון התנועה
-        const anglesToTest = [0, -0.4, 0.4, -0.8, 0.8, -1.5, 1.5, Math.PI];
-        
-        for (let a of anglesToTest) {
-            const testAngle = person.angle + a;
-            // חישוב המיקום הבא הפוטנציאלי
-            const nextX = person.x + Math.cos(testAngle) * person.speed;
-            const nextY = person.y + Math.sin(testAngle) * person.speed;
-
-            // בדיקה כפולה: האם המיקום הבא הוא בצבע #5ec7f2 והאם הוא לא חוזר מיידית על צעדיו
-            if (isColorMatch(nextX, nextY)) {
-                person.x = nextX;
-                person.y = nextY;
-                person.angle = testAngle;
-                moved = true;
-                break;
+        const target = nodes[person.targetNode];
+        if (target) {
+            const dx = target.x - person.x;
+            const dy = target.y - person.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if (dist > 4) {
+                person.x += (dx/dist) * person.speed;
+                person.y += (dy/dist) * person.speed;
+            } else {
+                if (person.targetNode === 'mars_target') {
+                    declareWinner(person);
+                    return;
+                }
+                
+                person.currentNode = person.targetNode;
+                const currentNeighbors = nodes[person.currentNode].neighbors;
+                
+                let unvisited = currentNeighbors.filter(n => !person.visited.includes(n));
+                if (unvisited.length === 0) {
+                    person.visited = [person.currentNode];
+                    unvisited = currentNeighbors;
+                }
+                
+                person.targetNode = unvisited[Math.floor(Math.random() * unvisited.length)];
+                person.visited.push(person.targetNode);
+                if(person.visited.length > 10) person.visited.shift();
             }
         }
 
-        // גיבוי למקרה של קצה מסלול או סיבוב קשוח - פנייה רנדומלית כדי לחזור למסלול
-        if (!moved) {
-            person.angle += (Math.random() - 0.5) * Math.PI;
-        }
-
-        // שמירת היסטוריית מיקומים קלה למניעת רעידות
-        person.history.push({x: person.x, y: person.y});
-        if(person.history.length > 20) person.history.shift();
-
-        // ציור דמות השחקן בתוך המסלול המדויק
         const circleRadius = 24; 
         ctx.save();
         ctx.translate(person.x, person.y);
