@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מירוץ מבוך אוטומטי - בית מרס</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; }
+        #canvas { display: block; margin: 0 auto; background: #000; }
+        #video { position: absolute; bottom: 10px; left: 10px; width: 160px; height: 120px; border: 2px solid #fff; border-radius: 8px; transform: scaleX(-1); z-index: 5; }
+        #status { position: absolute; top: 10px; right: 10px; color: white; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 8px; text-align: center; font-size: 18px; font-weight: bold; z-index: 10; min-width: 200px; }
+        #winner-screen { display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); color: white; flex-direction: column; justify-content: center; align-items: center; z-index: 20; }
+        #winner-canvas { border: 5px solid #ffd700; border-radius: 50%; width: 200px; height: 200px; margin-bottom: 20px; background: #333; }
+        #restart-btn { padding: 12px 24px; font-size: 18px; background: #2ecc71; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 20px; font-weight: bold; }
+    </style>
+    <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+</head>
+<body>
+
+    <div id="status">יוצר מפה חבויה ומנתח מסלולים...</div>
+    <canvas id="canvas"></canvas>
+    <video id="video" autoplay muted playsinline></video>
+
+    <div id="winner-screen">
+        <h1 style="font-size: 48px; color: #ffd700; margin-bottom: 10px;">🏆 יש לנו מנצח! 🏆</h1>
+        <canvas id="winner-canvas" width="150" height="150"></canvas>
+        <h2 id="winner-text" style="font-size: 28px;">השחקן צלח את המבוך והגיע לבית מרס!</h2>
+        <button id="restart-btn" onclick="resetGame()">סיבוב חדש 🔄</button>
+    </div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const video = document.getElementById('video');
+const statusDiv = document.getElementById('status');
+const winnerScreen = document.getElementById('winner-screen');
+const winnerCanvas = document.getElementById('winner-canvas');
+const winnerText = document.getElementById('winner-text');
+
+canvas.width = 980;
+canvas.height = 735;
+
+// יצירת קנבס חבוי לטובת מפת המסלולים המבודדת
+const hiddenCanvas = document.createElement('canvas');
+hiddenCanvas.width = canvas.width;
+hiddenCanvas.height = canvas.height;
+const hCtx = hiddenCanvas.getContext('2d');
+
+function resizeCanvas() {
+    const scale = Math.min(window.innerWidth / canvas.width, window.innerHeight / canvas.height);
+    canvas.style.width = (canvas.width * scale) + 'px';
+    canvas.style.height = (canvas.height * scale) + 'px';
+}
+window.addEventListener('resize', resizeCanvas);
+
+const mapBackground = new Image();
+mapBackground.src = 'מפה בית מרס.jpg'; 
+
+let people = [];
+let isCooldown = false;
+let gameOver = false;
+let playerCount = 0;
+let mapData = null; // ישמור את המידע על הפיקסלים של המסלול
+
+const playerColors = ['#3498db', '#2ecc71', '#f1c40f', '#e74c3c', '#9b59b6', '#e67e22'];
+
+// נקודת יעד סופית קבועה (בית מרס)
+const targetDestination = { x: 135, y: 85 };
+
+// נקודות התחלה בטוחות על הפס בתחתית
+const startPoints = [
+    { x: 620, y: 720 },
+    { x: 720, y: 690 },
+    { x: 470, y: 610 }
+];
+
+// פונקציה שבודקת האם פיקסל מסוים במפה הוא בצבע היעד #5ec7f2
+function isColorMatch(x, y) {
+    if (!mapData || x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return false;
+    const index = (Math.floor(y) * canvas.width + Math.floor(x)) * 4;
+    const r = mapData[index];
+    const g = mapData[index + 1];
+    const b = mapData[index + 2];
+    
+    // בדיקת טווח צבע (Tolerance) כדי להתמודד עם שינויי גוון קלים של התכלת במפה
+    return (r >= 80 && r <= 110 && g >= 185 && g <= 215 && b >= 230 && b <= 255);
+}
+
+async function init() {
+    resizeCanvas();
+    
+    // ציור המפה על הקנבס החבוי ושליפת ערכי הצבעים שלו
+    hCtx.drawImage(mapBackground, 0, 0, canvas.width, canvas.height);
+    const imgData = hCtx.getImageData(0, 0, canvas.width, canvas.height);
+    mapData = imgData.data;
+
+    statusDiv.innerText = "טוען מודלים של AI...";
+    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+    statusDiv.innerText = "מתחבר למצלמה...";
+    startVideo();
+}
+
+function startVideo() {
+    navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+        .then(stream => {
+            video.srcObject = stream;
+            video.addEventListener('play', () => {
+                statusDiv.innerText = "🎮 המבוך מוכן! עמוד מול המצלמה כדי להתחיל לצעוד על הפס התכלת.";
+                animate();
+                detectFaceLoop();
+            });
+        })
+        .catch(err => statusDiv.innerText = "שגיאה בגישה למצלמה: " + err.message);
+}
+
+async function detectFaceLoop() {
+    if (video.paused || video.ended || gameOver) return;
+    const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.1 }));
+
+    if (detection) {
+        const box = detection.box;
+        if (box.width > 130 && !isCooldown) {
+            triggerCapture(box);
+        }
+    }
+    setTimeout(detectFaceLoop, 100);
+}
+
+function triggerCapture(faceBox) {
+    isCooldown = true;
+    statusDiv.innerText = "📸 נועל פנים למבוך... נא להישאר יציב.";
+    statusDiv.style.background = "#e67e22"; 
+
+    setTimeout(() => {
+        captureAndAddNewPlayer();
+    }, 500);
+}
+
+async function captureAndAddNewPlayer() {
+    const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.1 }));
+    if (!detection) {
+        statusDiv.innerText = "❌ הלכידה נכשלה. נסה שוב.";
+        statusDiv.style.background = "rgba(0,0,0,0.8)";
+        isCooldown = false;
+        return;
+    }
+
+    const faceBox = detection.box;
+    playerCount++;
+    const playerColor = playerColors[(playerCount - 1) % playerColors.length];
+
+    const faceCanvas = document.createElement('canvas');
+    faceCanvas.width = 150;
+    faceCanvas.height = 150;
+    const fCtx = faceCanvas.getContext('2d');
+    const pad = faceBox.width * 0.15;
+    
+    fCtx.drawImage(video, faceBox.x - pad, faceBox.y - pad, faceBox.width + (pad*2), faceBox.height + (pad*2), 0, 0, 150, 150);
+
+    const faceImage = new Image();
+    faceImage.src = faceCanvas.toDataURL('image/png');
+
+    const startPos = startPoints[Math.floor(Math.random() * startPoints.length)];
+
+    people.push({
+        id: playerCount,
+        face: faceImage,
+        color: playerColor,
+        x: startPos.x,
+        y: startPos.y,
+        angle: -Math.PI / 2, // כיוון התחלתי קדימה/למעלה
+        speed: 1.2,
+        history: [] // מונע תקיעה בלולאות מבוך
+    });
+
+    statusDiv.innerText = "🏃‍♂️ שחקן " + playerCount + " נכנס ישירות לתוך הפס התכלת!";
+    statusDiv.style.background = playerColor;
+
+    setTimeout(() => {
+        if(!gameOver) {
+            statusDiv.innerText = "🎮 המשחק פעיל! עמדו מול המצלמה להוספת שחקנים.";
+            statusDiv.style.background = "rgba(0,0,0,0.8)";
+        }
+        isCooldown = false;
+    }, 3000);
+}
+
+function declareWinner(player) {
+    gameOver = true;
+    winnerText.innerText = "שחקן " + player.id + " פיצח את מבוך התכלת והגיע לבית מרס!";
+    winnerText.style.color = player.color;
+    const wCtx = winnerCanvas.getContext('2d');
+    wCtx.clearRect(0, 0, 150, 150);
+    wCtx.drawImage(player.face, 0, 0, 150, 150);
+    winnerScreen.style.display = 'flex';
+}
+
+function resetGame() {
+    people = [];
+    playerCount = 0;
+    gameOver = false;
+    winnerScreen.style.display = 'none';
+    statusDiv.innerText = "🎮 מי ינווט בתוך הפס ויגיע ראשון לבית מרס?";
+    statusDiv.style.background = "rgba(0,0,0,0.8)";
+    detectFaceLoop();
+}
+
+function animate() {
+    if (gameOver) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    if (mapBackground.complete) {
+        ctx.drawImage(mapBackground, 0, 0, canvas.width, canvas.height);
+    }
+
+    // סימון יעד בית מרס
+    ctx.beginPath();
+    ctx.arc(targetDestination.x, targetDestination.y, 22, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(231, 76, 60, 0.3)';
+    ctx.fill();
+    ctx.strokeStyle = '#e74c3c';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    people.forEach((person) => {
+        // בדיקת מרחק לניצחון
+        const distToTarget = Math.hypot(targetDestination.x - person.x, targetDestination.y - person.y);
+        if (distToTarget < 25) {
+            declareWinner(person);
+            return;
+        }
+
+        let moved = false;
+        // בינה מלאכותית למציאת נתיב במבוך: סריקת 8 זוויות אפשריות סביב כיוון התנועה
+        const anglesToTest = [0, -0.4, 0.4, -0.8, 0.8, -1.5, 1.5, Math.PI];
+        
+        for (let a of anglesToTest) {
+            const testAngle = person.angle + a;
+            // חישוב המיקום הבא הפוטנציאלי
+            const nextX = person.x + Math.cos(testAngle) * person.speed;
+            const nextY = person.y + Math.sin(testAngle) * person.speed;
+
+            // בדיקה כפולה: האם המיקום הבא הוא בצבע #5ec7f2 והאם הוא לא חוזר מיידית על צעדיו
+            if (isColorMatch(nextX, nextY)) {
+                person.x = nextX;
+                person.y = nextY;
+                person.angle = testAngle;
+                moved = true;
+                break;
+            }
+        }
+
+        // גיבוי למקרה של קצה מסלול או סיבוב קשוח - פנייה רנדומלית כדי לחזור למסלול
+        if (!moved) {
+            person.angle += (Math.random() - 0.5) * Math.PI;
+        }
+
+        // שמירת היסטוריית מיקומים קלה למניעת רעידות
+        person.history.push({x: person.x, y: person.y});
+        if(person.history.length > 20) person.history.shift();
+
+        // ציור דמות השחקן בתוך המסלול המדויק
+        const circleRadius = 24; 
+        ctx.save();
+        ctx.translate(person.x, person.y);
+        ctx.beginPath();
+        ctx.arc(0, 0, circleRadius, 0, Math.PI * 2);
+        ctx.clip();
+        if (person.face.complete) {
+            ctx.scale(-1, 1);
+            ctx.drawImage(person.face, -circleRadius, -circleRadius, circleRadius * 2, circleRadius * 2);
+        }
+        ctx.restore();
+        
+        ctx.beginPath();
+        ctx.arc(person.x, person.y, circleRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = person.color;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText("P" + person.id, person.x, person.y - (circleRadius + 6));
+    });
+
+    requestAnimationFrame(animate);
+}
+
+mapBackground.onload = () => {
+    init();
+};
+</script>
+</body>
+</html>
