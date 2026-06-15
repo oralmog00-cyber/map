@@ -13,7 +13,7 @@
         #winner-canvas { border: 5px solid #ffd700; border-radius: 50%; width: 200px; height: 200px; margin-bottom: 20px; background: #333; }
         #restart-btn { padding: 12px 24px; font-size: 18px; background: #2ecc71; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 20px; font-weight: bold; }
     </style>
-    <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
 </head>
 <body>
 
@@ -57,30 +57,25 @@ let playerCount = 0;
 
 const playerColors = ['#3498db', '#2ecc71', '#f1c40f', '#e74c3c', '#9b59b6', '#e67e22'];
 
-// 📍 רשת נקודות צפופה במיוחד (High-Density Grid) העוקבת בדיוק פנימי אחרי נתיב התכלת
+// 📍 רשת נקודות מדויקת על קווי התכלת #5ec7f2
 const nodes = {
-    // שדרות ישראל גורי - קו ישר ועקומות עדינות
     'guri_start': { x: 620, y: 720, neighbors: ['guri_1'] },
     'guri_1': { x: 622, y: 690, neighbors: ['guri_start', 'guri_2'] },
     'guri_2': { x: 625, y: 655, neighbors: ['guri_1', 'guri_3', 'guld_1'] },
     'guri_3': { x: 623, y: 620, neighbors: ['guri_2', 'guri_4'] },
     'guri_4': { x: 610, y: 585, neighbors: ['guri_3', 'haj_ini_square'] },
     
-    // רחוב גולדפאדן (הסתעפות ימנית קטנה)
     'guld_1': { x: 660, y: 670, neighbors: ['guri_2', 'guld_2'] },
     'guld_2': { x: 700, y: 685, neighbors: ['guld_1', 'guld_end'] },
     'guld_end': { x: 725, y: 692, neighbors: ['guld_2'] },
 
-    // כיכר חאג' עיני (צומת מרכזי)
     'haj_ini_square': { x: 590, y: 550, neighbors: ['guri_4', 'hakran_1', 'keshet_r1'] },
 
-    // רחוב הקרן המוליך אל בי"ס נופים
     'hakran_1': { x: 585, y: 515, neighbors: ['haj_ini_square', 'hakran_2'] },
     'hakran_2': { x: 580, y: 475, neighbors: ['hakran_1', 'nofim_1'] },
     'nofim_1': { x: 595, y: 445, neighbors: ['hakran_2', 'nofim_2'] },
     'nofim_2': { x: 610, y: 415, neighbors: ['nofim_1', 'highway_junction'] },
 
-    // מבוך רחוב הקשת - סיבוב מעגלי מלא ומדויק על רצועת התכלת
     'keshet_r1': { x: 550, y: 542, neighbors: ['haj_ini_square', 'keshet_r2'] },
     'keshet_r2': { x: 515, y: 532, neighbors: ['keshet_r1', 'keshet_b1'] },
     'keshet_b1': { x: 495, y: 560, neighbors: ['keshet_r2', 'keshet_b2'] },
@@ -93,7 +88,6 @@ const nodes = {
     'keshet_t2': { x: 448, y: 475, neighbors: ['keshet_t1', 'keshet_t3'] },
     'keshet_t3': { x: 472, y: 452, neighbors: ['keshet_t2', 'highway_junction'] },
 
-    // רחוב לבון הראשי - עליה מדורגת צפונה במרכז המפה
     'highway_junction': { x: 495, y: 380, neighbors: ['nofim_2', 'keshet_t3', 'highway_1'] },
     'highway_1': { x: 490, y: 350, neighbors: ['highway_junction', 'highway_2'] },
     'highway_2': { x: 475, y: 310, neighbors: ['highway_1', 'highway_3'] },
@@ -101,20 +95,25 @@ const nodes = {
     'highway_4': { x: 445, y: 225, neighbors: ['highway_3', 'highway_5'] },
     'highway_5': { x: 428, y: 180, neighbors: ['highway_4', 'highway_turn'] },
     
-    // פנייה שמאלה וניווט רחוב בית מרס
     'highway_turn': { x: 380, y: 130, neighbors: ['highway_5', 'mars_str_1'] },
     'mars_str_1': { x: 335, y: 124, neighbors: ['highway_turn', 'mars_str_2'] },
     'mars_str_2': { x: 285, y: 118, neighbors: ['mars_str_1', 'mars_str_3'] },
     'mars_str_3': { x: 230, y: 112, neighbors: ['mars_str_2', 'mars_str_4'] },
     'mars_str_4': { x: 185, y: 106, neighbors: ['mars_str_3', 'mars_target'] },
     
-    // 🏁 נקודת היעד הסופית: בית מרס (הסיכה האדומה)
     'mars_target': { x: 135, y: 85, neighbors: ['mars_str_4'] } 
 };
 
 async function init() {
     resizeCanvas();
     statusDiv.innerText = "טוען מודלים של AI...";
+    
+    // בדיקה בטוחה ש-faceapi אכן קיים ונטען בזיכרון
+    if (typeof faceapi === 'undefined') {
+        setTimeout(init, 200); // אם עדיין לא נטען, ננסה שוב בעוד 200 מילישניות
+        return;
+    }
+
     const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
     await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
     statusDiv.innerText = "מתחבר למצלמה...";
@@ -303,7 +302,8 @@ function animate() {
     requestAnimationFrame(animate);
 }
 
-mapBackground.onload = () => {
+// מחכים שחלון הדפדפן וכל הסקריפטים החיצוניים ייטענו באופן סופי ומלא
+window.onload = () => {
     init();
 };
 </script>
